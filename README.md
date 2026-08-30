@@ -39,14 +39,14 @@ Set `GUAVA_AGENT_NUMBER` and (optionally) `GUAVA_API_KEY` in `.env` — see
 `.env` in this repo (gitignored). Then, from this directory:
 
 ```bash
-uv run main.py -- --chat        # fastest iteration loop, curses text chat
-uv run main.py -- --local       # real audio via laptop mic/speakers
-uv run main.py -- --webrtc      # browser call via app.goguava.ai/debug-webrtc
-uv run main.py -- --phone       # listen on GUAVA_AGENT_NUMBER — call it for real
-uv run main.py -- --roleplay "You are a caller asking about deductibles"
+uv run main.py --chat        # fastest iteration loop, curses text chat
+uv run main.py --local       # real audio via laptop mic/speakers
+uv run main.py --webrtc      # browser call via app.goguava.ai/debug-webrtc
+uv run main.py --phone       # listen on GUAVA_AGENT_NUMBER — call it for real
+uv run main.py --roleplay "You are a caller asking about deductibles"
 ```
 
-or equivalently `guava run . -- --chat` (etc).
+or equivalently `guava run . -- --chat` (etc, using `guava run`'s own `--` separator).
 
 Run the automated regression checks with:
 
