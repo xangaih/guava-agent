@@ -104,8 +104,10 @@ def _attempt_confirm(call: guava.Call, trip_id: str, item: dict) -> bool:
     call.set_variable("pending_tradeoff", {"item_id": item["id"], "over_amount": over_amount})
     call.send_instruction(
         f"Explain that confirming {item['title']} (${item['cost']:.0f}) would put the trip "
-        f"${over_amount:.0f} over budget, then offer these specific options naturally and "
-        f"recommend one based on their stated spend priorities: {tradeoffs}"
+        f"${over_amount:.0f} over budget. Mention just one of these options at a time, weighing "
+        f"both what it saves and what it does to the flow of the trip (extra travel between "
+        f"stops, a day that no longer overlaps, etc.) rather than leading with price — and "
+        f"recommend the one that best fits their stated spend priorities: {tradeoffs}"
     )
     return False
 
@@ -205,8 +207,16 @@ def on_budget_status(call: guava.Call):
     )
 
 
-@agent.on_action("finalize_trip")
-def on_finalize_trip(call: guava.Call):
+_CITY_RECAP_IMAGES = {
+    "kyoto": "/assets/kyoto.png",
+    "paris": "/assets/paris.png",
+}
+
+
+def finalize_trip(call: guava.Call, closing_note: str = "Thank them and say their trip is ready to view."):
+    """Mark the trip finalized, recap it, and end the call. Shared by the explicit
+    'finalize_trip' intent and the trip_planning task's completion criteria, so the
+    call ends the same way whether the caller asks to wrap up or just runs out of asks."""
     trip_id = call.get_variable("trip_id")
     items = db.list_itinerary_items(trip_id, status="confirmed")
     total_cost = sum(i["cost"] or 0 for i in items)
@@ -219,12 +229,22 @@ def on_finalize_trip(call: guava.Call):
     conn.commit()
     conn.close()
 
+    city = (trip["destination"] or "").split(",")[0].strip().lower()
+    recap_image = _CITY_RECAP_IMAGES.get(city)
+    if recap_image:
+        db.insert_trip_comic(trip_id, recap_image)
+
     call.send_instruction(
         "Give a short, warm recap of the finalized trip and let them know their plan is ready "
         f"on screen. Total confirmed spend: ${total_cost:.0f} of ${trip['total_budget']:.0f}."
         + ("" if within_budget else " Note the trip is slightly over budget.")
     )
-    call.hangup(final_instructions="Thank them and say their trip is ready to view.")
+    call.hangup(final_instructions=closing_note)
+
+
+@agent.on_action("finalize_trip")
+def on_finalize_trip(call: guava.Call):
+    finalize_trip(call)
 
 
 @agent.on_action("change_voice_style")

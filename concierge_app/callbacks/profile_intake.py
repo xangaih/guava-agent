@@ -2,8 +2,9 @@ import logging
 
 import guava
 
-from concierge_app import db, voice_styles
+from concierge_app import db, status_store, voice_styles
 from concierge_app.agent import agent
+from concierge_app.callbacks.planning_actions import finalize_trip
 from concierge_app.specialists import budget, experiences, hotels, restaurants
 
 logger = logging.getLogger("concierge.profile_intake")
@@ -57,36 +58,61 @@ def on_trip_intake_complete(call: guava.Call):
 
     call.set_variable("trip_id", trip_id)
     call.set_variable("traveler_id", traveler_id)
+    status_store.set_trip_id(trip_id)
 
     split = budget.category_budget_split(float(total_budget), spend_priorities)
     db.insert_category_budgets(trip_id, split)
 
     city = destination.split(",")[0].strip()
-    proposed_hotels = hotels.propose_hotels(trip_id, city, interests)
-    proposed_restaurants = restaurants.propose_restaurants(trip_id, city, interests)
-    proposed_experiences = experiences.propose_experiences(trip_id, city, interests)
+    proposed_hotels = hotels.propose_hotels(trip_id, city, interests, count=1)
+    proposed_restaurants = restaurants.propose_restaurants(trip_id, city, interests, count=1)
+    proposed_experiences = experiences.propose_experiences(trip_id, city, interests, count=1)
 
     summary_parts = []
     if proposed_hotels:
         summary_parts.append(
-            "hotels: " + ", ".join(f"{h['name']} (${h['cost']:.0f})" for h in proposed_hotels)
+            "hotel: " + ", ".join(f"{h['name']} (${h['cost']:.0f})" for h in proposed_hotels)
         )
     if proposed_restaurants:
         summary_parts.append(
-            "restaurants: " + ", ".join(f"{r['name']} ({r['price_tier']})" for r in proposed_restaurants)
+            "restaurant: " + ", ".join(f"{r['name']} ({r['price_tier']})" for r in proposed_restaurants)
         )
     if proposed_experiences:
         summary_parts.append(
-            "experiences: " + ", ".join(f"{e['name']} (${e['cost']:.0f})" for e in proposed_experiences)
+            "experience: " + ", ".join(f"{e['name']} (${e['cost']:.0f})" for e in proposed_experiences)
         )
 
     call.send_instruction(
-        "I've pulled together a few options based on their trip. Describe them naturally and "
-        "ask what stands out: " + "; ".join(summary_parts) + ". "
-        f"Total budget is ${total_budget}. Let them know they can add, remove, or ask about budget "
-        "at any point."
+        "Share these trip ideas gradually — this is a phone call, not a list to read out. "
+        "Mention just the hotel first (name and what makes it a good fit, skip the price unless "
+        "asked) and pause for their reaction. Only after they respond, bring up the restaurant; "
+        "only after that, the experience. Never state more than one option in a single turn. "
+        "Here's what's available if it comes up: " + "; ".join(summary_parts) + ". "
+        f"Their total budget is ${total_budget}, but lead with the places, not the numbers. "
+        "They can add, remove, or ask about budget at any point."
+    )
+
+    call.set_task(
+        "trip_planning",
+        objective=(
+            "Keep helping the traveler plan this trip: propose, add, or remove hotels, "
+            "restaurants, and experiences, answer budget questions, and walk through budget "
+            "tradeoffs if something they want doesn't fit. Keep every turn short and focused on "
+            "one thing at a time — never stack multiple options, prices, or follow-up questions "
+            "into a single response. After you finish handling each request, ask if there's "
+            "anything else you can help them plan."
+        ),
+        completion_criteria=(
+            "The caller has said they're happy with the plan and don't need help with anything "
+            "else, or they've explicitly asked to finalize or wrap up the trip."
+        ),
     )
     logger.info("Trip intake complete for trip %s (%s)", trip_id, destination)
+
+
+@agent.on_task_complete("trip_planning")
+def on_trip_planning_complete(call: guava.Call):
+    finalize_trip(call, closing_note="Thank them warmly for planning with Nomi and say goodbye.")
 
 
 def caller_phone(call: guava.Call) -> str | None:

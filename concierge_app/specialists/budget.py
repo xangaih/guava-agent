@@ -34,38 +34,67 @@ def _category_table(item_type: str) -> str | None:
     return {"hotel": "hotels", "restaurant": "restaurants", "experience": "experiences"}.get(item_type)
 
 
+def _neighborhood(item: dict) -> str:
+    """First comma segment of an item's location — a neighborhood for hotels/restaurants,
+    the city itself for experiences. Used only as a rough proximity signal, not real geodata."""
+    return (item.get("location") or "").split(",")[0].strip()
+
+
+def _city(item: dict) -> str:
+    """Last comma segment of an item's location — always the city, for both the
+    'Neighborhood, City' shape (hotels/restaurants) and the bare-city shape (experiences)."""
+    return (item.get("location") or "").split(",")[-1].strip()
+
+
 def generate_tradeoffs(trip_id: str, item: dict, over_amount: float) -> list[dict]:
     tradeoffs = []
+    confirmed = db.list_itinerary_items(trip_id, status="confirmed")
 
     table = _category_table(item.get("item_type"))
-    if table:
+    if table and table != "restaurants":
         import sqlite3
 
         conn = sqlite3.connect(db.DB_PATH)
         conn.row_factory = sqlite3.Row
-        if table != "restaurants":
-            rows = conn.execute(
-                f"SELECT * FROM {table} WHERE price < ? ORDER BY price DESC LIMIT 1",
-                (item["cost"],),
-            ).fetchall()
-            conn.close()
-            if rows:
-                cheaper = dict(rows[0])
-                tradeoffs.append({
-                    "type": "swap",
-                    "description": f"switch to {cheaper['name']} (${cheaper['price']:.0f})",
-                    "saves": round(item["cost"] - cheaper["price"], 2),
-                })
-        else:
-            conn.close()
+        candidates = [dict(r) for r in conn.execute(
+            f"SELECT * FROM {table} WHERE price < ? AND city = ? COLLATE NOCASE ORDER BY price DESC",
+            (item["cost"], _city(item)),
+        ).fetchall()]
+        conn.close()
+        if candidates:
+            item_neighborhood = _neighborhood(item)
+            same_area = next((c for c in candidates if c["neighborhood"] == item_neighborhood), None)
+            cheaper = same_area or candidates[0]
+            if cheaper["neighborhood"] == item_neighborhood:
+                flow_note = f"stays right in {cheaper['neighborhood']}, so it won't add travel between stops"
+            else:
+                flow_note = (
+                    f"is over in {cheaper['neighborhood']} instead of {item_neighborhood}, "
+                    "a bit further from the rest of the plan"
+                )
+            tradeoffs.append({
+                "type": "swap",
+                "description": f"switch to {cheaper['name']} (${cheaper['price']:.0f}) — {flow_note}",
+                "saves": round(item["cost"] - cheaper["price"], 2),
+            })
 
-    items = db.list_itinerary_items(trip_id, status="confirmed")
-    optional_items = [i for i in items if i["priority"] == "optional"]
+    optional_items = [i for i in confirmed if i["priority"] == "optional"]
     if optional_items:
-        drop = optional_items[-1]
+        neighborhood_counts: dict[str, int] = {}
+        for i in confirmed:
+            n = _neighborhood(i)
+            neighborhood_counts[n] = neighborhood_counts.get(n, 0) + 1
+
+        # Prefer dropping whichever optional item shares its neighborhood with the fewest
+        # other confirmed stops — i.e. the one least woven into the rest of the day's flow.
+        drop = min(optional_items, key=lambda i: neighborhood_counts.get(_neighborhood(i), 0))
+        if neighborhood_counts.get(_neighborhood(drop), 0) <= 1:
+            flow_note = "it's already off on its own, away from everything else you've planned"
+        else:
+            flow_note = "it overlaps with another stop, so the day still flows fine without it"
         tradeoffs.append({
             "type": "remove",
-            "description": f"drop {drop['title']}",
+            "description": f"drop {drop['title']} — {flow_note}",
             "saves": round(drop["cost"] or 0, 2),
         })
 
