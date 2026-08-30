@@ -1,28 +1,11 @@
-"""Entrypoint used by `guava run`. Dispatches to app/main.py (ClaimLine) or
-concierge_app/main.py (Concierge) based on --agent. Both bind to the same
-GUAVA_AGENT_NUMBER, so only run one at a time with --phone.
+"""Entrypoint used by `guava run` and `uv run main.py`.
 
-Usage: guava run . -- --agent claimline --phone   (default agent)
-       guava run . -- --agent concierge --chat
+Runs Concierge, the voice-first travel planner in concierge_app/.
+
+Usage: guava run . -- --chat | --local | --webrtc | --phone | --roleplay "PROMPT"
 """
 
-import argparse
-import sys
-
-
-def main():
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--agent", choices=["claimline", "concierge"], default="claimline")
-    known, remaining = parser.parse_known_args()
-
-    sys.argv = [sys.argv[0]] + remaining
-
-    if known.agent == "concierge":
-        from concierge_app.main import main as run
-    else:
-        from app.main import main as run
-    run()
-
+from concierge_app.main import main
 
 if __name__ == "__main__":
     main()
