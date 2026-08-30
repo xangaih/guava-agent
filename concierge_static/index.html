@@ -89,11 +89,34 @@
   }
   .comic-panel img { max-width: 100%; border-radius: 8px; }
   .comic-fallback { font-size: 28px; }
+  .status-line { display: flex; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 8px; }
+  .status-dot.live { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .transcript-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 24px;
+    max-height: 220px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .transcript-panel .line { margin-bottom: 6px; }
+  .transcript-panel .speaker-agent { color: var(--accent); font-weight: 600; }
+  .transcript-panel .speaker-caller { color: #58a6ff; font-weight: 600; }
+  .transcript-panel .empty { padding: 8px; text-align: left; }
 </style>
 </head>
 <body>
   <h1>Concierge — Trip Board</h1>
   <div class="subtitle">Nomi Travel Concierge · local demo dashboard</div>
+
+  <div class="status-line">
+    <span id="status-dot" class="status-dot"></span>
+    <span id="status-text">No active call</span>
+  </div>
 
   <div class="budget-panel">
     <div class="budget-numbers">
@@ -103,26 +126,59 @@
     <div class="budget-bar-track"><div id="budget-fill" class="budget-bar-fill" style="width:0%"></div></div>
   </div>
 
+  <div id="transcript-panel" class="transcript-panel"></div>
+
   <div id="itinerary"></div>
   <div id="comic-panel"></div>
 
 <script>
 async function poll() {
   try {
-    const [tripRes, itemsRes, comicRes] = await Promise.all([
+    const [tripRes, itemsRes, comicRes, statusRes, transcriptRes] = await Promise.all([
       fetch('/api/trip'),
       fetch('/api/itinerary'),
       fetch('/api/comic'),
+      fetch('/api/status'),
+      fetch('/api/transcript'),
     ]);
     const trip = await tripRes.json();
     const items = await itemsRes.json();
     const comic = await comicRes.json();
+    const status = await statusRes.json();
+    const transcript = await transcriptRes.json();
     renderBudget(trip, items);
     renderItinerary(items);
     renderComic(comic);
+    renderStatus(status);
+    renderTranscript(transcript);
   } catch (e) {
     // keep polling even on a transient failure
   }
+}
+
+function renderStatus(status) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  if (status.active_call) {
+    dot.classList.add('live');
+    text.textContent = 'Call in progress';
+  } else {
+    dot.classList.remove('live');
+    text.textContent = 'No active call';
+  }
+}
+
+function renderTranscript(lines) {
+  const el = document.getElementById('transcript-panel');
+  if (!lines.length) {
+    el.innerHTML = '<div class="empty">No transcript yet</div>';
+    return;
+  }
+  el.innerHTML = lines.map(l => `<div class="line">
+    <span class="speaker-${l.speaker === 'agent' ? 'agent' : 'caller'}">${l.speaker === 'agent' ? 'Nomi' : 'Caller'}:</span>
+    ${escapeHtml(l.utterance)}
+  </div>`).join('');
+  el.scrollTop = el.scrollHeight;
 }
 
 function renderBudget(trip, items) {

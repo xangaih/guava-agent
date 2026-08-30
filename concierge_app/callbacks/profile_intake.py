@@ -2,7 +2,7 @@ import logging
 
 import guava
 
-from concierge_app import db
+from concierge_app import db, status_store
 from concierge_app.agent import agent
 from concierge_app.callbacks.planning_actions import finalize_trip
 from concierge_app.specialists import budget, experiences, hotels, restaurants
@@ -52,6 +52,7 @@ def on_trip_intake_complete(call: guava.Call):
 
     call.set_variable("trip_id", trip_id)
     call.set_variable("traveler_id", traveler_id)
+    status_store.set_trip_id(trip_id)
 
     split = budget.category_budget_split(float(total_budget), spend_priorities)
     db.insert_category_budgets(trip_id, split)

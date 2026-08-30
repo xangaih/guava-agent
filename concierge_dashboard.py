@@ -10,11 +10,22 @@ import sqlite3
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from concierge_app import status_store
 from concierge_app.db import DB_PATH, init_db
 
 app = FastAPI()
 
 init_db()
+
+
+@app.get("/api/status")
+def api_status():
+    return status_store.get_status()
+
+
+@app.get("/api/transcript")
+def api_transcript():
+    return status_store.get_transcript()
 
 
 def _connect():
