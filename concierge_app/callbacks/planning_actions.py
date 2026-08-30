@@ -5,7 +5,7 @@ import guava
 from guava import SuggestedAction
 from guava.helpers.llm import IntentRecognizer
 
-from concierge_app import db
+from concierge_app import db, voice_styles
 from concierge_app.agent import agent
 from concierge_app.specialists import budget
 
@@ -16,6 +16,11 @@ ACTIONS = {
     "remove_from_itinerary": "caller wants to remove or swap something already planned",
     "budget_status": "caller is asking how much they've spent or have left in their budget",
     "finalize_trip": "caller is done planning and wants to wrap up the trip",
+    "change_voice_style": (
+        "caller is commenting on how the agent sounds or asking it to talk differently - "
+        "more casual, more chill, calmer, slower, more professional, less slang, "
+        "or naming a style directly"
+    ),
 }
 intent_recognizer = IntentRecognizer(ACTIONS)
 
@@ -139,3 +144,33 @@ def on_finalize_trip(call: guava.Call):
         + ("" if within_budget else " Note the trip is slightly over budget.")
     )
     call.hangup(final_instructions="Thank them and say their trip is ready to view.")
+
+
+@agent.on_action("change_voice_style")
+def on_change_voice_style(call: guava.Call):
+    from concierge_app.callbacks.voice_style import switch_style
+
+    request = call.get_variable("last_request") or ""
+    style = switch_style(call, _style_from_request(request))
+    call.send_instruction(
+        f"Switch to a {style.label} manner starting now. Briefly acknowledge the change in that "
+        "new manner, then pick the trip conversation back up exactly where it left off."
+    )
+
+
+_STYLE_CUES = {
+    "genz": ("chill", "casual", "fun", "relaxed", "friend", "young", "girl", "slang", "loose",
+             "genz", "zoomer", "texting", "vibe", "excited"),
+    "steady": ("calm", "slow", "slower", "clearer", "clear", "professional", "serious", "formal",
+               "plain", "straight", "older", "business", "repeat", "again", "hear", "understand",
+               "confusing", "fast"),
+    "friendly": ("friendly", "normal", "regular", "warm", "everyday", "neutral"),
+}
+
+
+def _style_from_request(request: str) -> str | None:
+    """Best-effort mapping of 'talk more X' to a style key; falls back to the default."""
+    words = _words(request)
+    scores = {key: len(words & set(cues)) for key, cues in _STYLE_CUES.items()}
+    best = max(scores, key=scores.get)
+    return best if scores[best] else None

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS travelers (
 CREATE TABLE IF NOT EXISTS traveler_profiles (
     traveler_id TEXT PRIMARY KEY,
     pace TEXT,
+    voice_style TEXT,
     day_start TEXT,
     day_end TEXT,
     interests TEXT,
@@ -120,10 +121,18 @@ CREATE TABLE IF NOT EXISTS trip_comics (
 def init_db():
     conn = _connect()
     conn.executescript(SCHEMA)
+    _migrate(conn)
     conn.commit()
     if conn.execute("SELECT COUNT(*) FROM hotels").fetchone()[0] == 0:
         _seed(conn)
     conn.close()
+
+
+def _migrate(conn: sqlite3.Connection):
+    """Additive column migrations for databases created before a column existed."""
+    existing = {r["name"] for r in conn.execute("PRAGMA table_info(traveler_profiles)")}
+    if "voice_style" not in existing:
+        conn.execute("ALTER TABLE traveler_profiles ADD COLUMN voice_style TEXT")
 
 
 def _seed(conn: sqlite3.Connection):
@@ -197,12 +206,14 @@ def insert_traveler(name: str, phone: str | None) -> str:
 
 
 def insert_traveler_profile(traveler_id: str, pace: str, interests: list[str], spend_priorities: str,
-                             day_start: str = "09:00", day_end: str = "23:00"):
+                             day_start: str = "09:00", day_end: str = "23:00",
+                             voice_style: str | None = None):
     conn = _connect()
     conn.execute(
-        "INSERT INTO traveler_profiles (traveler_id, pace, day_start, day_end, interests, "
-        "spend_priorities, dietary_restrictions, notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (traveler_id, pace, day_start, day_end, json.dumps(interests), spend_priorities,
+        "INSERT OR REPLACE INTO traveler_profiles (traveler_id, pace, voice_style, day_start, day_end, "
+        "interests, spend_priorities, dietary_restrictions, notes, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (traveler_id, pace, voice_style, day_start, day_end, json.dumps(interests), spend_priorities,
          json.dumps([]), "", _now()),
     )
     conn.commit()
@@ -241,6 +252,48 @@ def get_traveler_profile(traveler_id: str) -> dict | None:
     data["interests"] = json.loads(data["interests"] or "[]")
     data["dietary_restrictions"] = json.loads(data["dietary_restrictions"] or "[]")
     return data
+
+
+def find_traveler_by_phone(phone: str | None) -> dict | None:
+    if not phone:
+        return None
+    conn = _connect()
+    row = conn.execute(
+        "SELECT * FROM travelers WHERE phone = ? ORDER BY created_at DESC LIMIT 1", (phone,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_voice_style(traveler_id: str | None) -> str | None:
+    if not traveler_id:
+        return None
+    conn = _connect()
+    row = conn.execute(
+        "SELECT voice_style FROM traveler_profiles WHERE traveler_id = ?", (traveler_id,)
+    ).fetchone()
+    conn.close()
+    return row["voice_style"] if row else None
+
+
+def set_traveler_name(traveler_id: str, name: str):
+    conn = _connect()
+    conn.execute("UPDATE travelers SET name = ? WHERE id = ?", (name, traveler_id))
+    conn.commit()
+    conn.close()
+
+
+def set_voice_style(traveler_id: str, voice_style: str):
+    """Remember the caller's preferred style so the next call opens in it."""
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO traveler_profiles (traveler_id, voice_style, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(traveler_id) DO UPDATE SET voice_style = excluded.voice_style, "
+        "updated_at = excluded.updated_at",
+        (traveler_id, voice_style, _now()),
+    )
+    conn.commit()
+    conn.close()
 
 
 def insert_category_budgets(trip_id: str, split: dict[str, float]):

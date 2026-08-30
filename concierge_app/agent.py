@@ -1,7 +1,9 @@
 import guava
 
+from concierge_app import voice_styles
+
 agent = guava.Agent(
-    name="Nomi",
-    organization="Nomi Travel Concierge",
-    purpose="Help travelers plan a trip: propose hotels, restaurants, and experiences within budget.",
+    name=voice_styles.AGENT_NAME,
+    organization=voice_styles.ORGANIZATION,
+    purpose=voice_styles.get(voice_styles.DEFAULT_STYLE).purpose(),
 )

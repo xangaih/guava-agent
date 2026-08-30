@@ -9,6 +9,7 @@ load_env()
 from concierge_app.agent import agent
 from concierge_app.db import init_db
 
+import concierge_app.callbacks.voice_style  # noqa: F401
 import concierge_app.callbacks.lifecycle  # noqa: F401
 import concierge_app.callbacks.questions  # noqa: F401
 import concierge_app.callbacks.planning_actions  # noqa: F401

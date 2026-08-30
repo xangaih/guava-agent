@@ -2,7 +2,7 @@ import logging
 
 import guava
 
-from concierge_app import db
+from concierge_app import db, voice_styles
 from concierge_app.agent import agent
 from concierge_app.specialists import budget, hotels, restaurants
 
@@ -44,8 +44,14 @@ def on_trip_intake_complete(call: guava.Call):
     spend_priorities = call.get_field("spend_priorities") or ""
     interests = [i.strip() for i in top_interests_raw.replace(" and ", ",").split(",") if i.strip()]
 
-    traveler_id = db.insert_traveler(name="Caller", phone=_caller_phone(call))
-    db.insert_traveler_profile(traveler_id, pace=pace, interests=interests, spend_priorities=spend_priorities)
+    style_key = call.get_variable("voice_style") or voice_styles.DEFAULT_STYLE
+    traveler_id = call.get_variable("traveler_id")
+    if not traveler_id:
+        traveler_id = db.insert_traveler(
+            name=call.get_variable("caller_name") or "Caller", phone=caller_phone(call)
+        )
+    db.insert_traveler_profile(traveler_id, pace=pace, interests=interests,
+                               spend_priorities=spend_priorities, voice_style=style_key)
     trip_id = db.insert_trip(traveler_id, destination=destination, days=call.get_field("trip_length_days") or 3,
                               total_budget=float(total_budget))
 
@@ -78,8 +84,12 @@ def on_trip_intake_complete(call: guava.Call):
     logger.info("Trip intake complete for trip %s (%s)", trip_id, destination)
 
 
-def _caller_phone(call: guava.Call) -> str | None:
-    call_info = call.call_info
-    if call_info.call_type == "pstn":
-        return call_info.from_number
+def caller_phone(call: guava.Call) -> str | None:
+    """Caller ID, when there is one. Chat, local, and webrtc channels have none."""
+    try:
+        call_info = call.call_info
+        if call_info and call_info.call_type == "pstn":
+            return call_info.from_number
+    except Exception:  # noqa: BLE001 - never block a call over caller ID
+        logger.debug("No caller ID available on this channel", exc_info=True)
     return None
