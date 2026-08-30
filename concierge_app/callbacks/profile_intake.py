@@ -1,0 +1,85 @@
+import logging
+
+import guava
+
+from concierge_app import db
+from concierge_app.agent import agent
+from concierge_app.specialists import budget, hotels, restaurants
+
+logger = logging.getLogger("concierge.profile_intake")
+
+
+def start_trip_intake(call: guava.Call):
+    call.set_task(
+        "trip_intake",
+        objective="Learn how this traveler likes to travel and get the shape of this trip.",
+        checklist=[
+            guava.Field(key="destination", field_type="text", description="Where they want to go"),
+            guava.Field(key="trip_length_days", field_type="integer", description="How many days"),
+            guava.Field(key="party_size", field_type="integer", description="How many people traveling"),
+            guava.Field(key="total_budget", field_type="integer", description="Total trip budget in dollars"),
+            guava.Field(
+                key="pace", field_type="multiple_choice",
+                choices=["relaxed", "balanced", "packed"],
+                description="Relaxed wandering vs. see-everything pace",
+            ),
+            guava.Field(
+                key="top_interests", field_type="text",
+                description="What they most enjoy on trips — food, architecture, nightlife, etc.",
+            ),
+            guava.Field(
+                key="spend_priorities", field_type="text",
+                description="What they actually like spending money on vs. don't care about",
+            ),
+        ],
+    )
+
+
+@agent.on_task_complete("trip_intake")
+def on_trip_intake_complete(call: guava.Call):
+    destination = call.get_field("destination") or "Kyoto, Japan"
+    total_budget = call.get_field("total_budget") or 3000
+    pace = call.get_field("pace") or "balanced"
+    top_interests_raw = call.get_field("top_interests") or ""
+    spend_priorities = call.get_field("spend_priorities") or ""
+    interests = [i.strip() for i in top_interests_raw.replace(" and ", ",").split(",") if i.strip()]
+
+    traveler_id = db.insert_traveler(name="Caller", phone=_caller_phone(call))
+    db.insert_traveler_profile(traveler_id, pace=pace, interests=interests, spend_priorities=spend_priorities)
+    trip_id = db.insert_trip(traveler_id, destination=destination, days=call.get_field("trip_length_days") or 3,
+                              total_budget=float(total_budget))
+
+    call.set_variable("trip_id", trip_id)
+    call.set_variable("traveler_id", traveler_id)
+
+    split = budget.category_budget_split(float(total_budget), spend_priorities)
+    db.insert_category_budgets(trip_id, split)
+
+    city = destination.split(",")[0].strip()
+    proposed_hotels = hotels.propose_hotels(trip_id, city, interests)
+    proposed_restaurants = restaurants.propose_restaurants(trip_id, city, interests)
+
+    summary_parts = []
+    if proposed_hotels:
+        summary_parts.append(
+            "hotels: " + ", ".join(f"{h['name']} (${h['cost']:.0f})" for h in proposed_hotels)
+        )
+    if proposed_restaurants:
+        summary_parts.append(
+            "restaurants: " + ", ".join(f"{r['name']} ({r['price_tier']})" for r in proposed_restaurants)
+        )
+
+    call.send_instruction(
+        "I've pulled together a few options based on their trip. Describe them naturally and "
+        "ask what stands out: " + "; ".join(summary_parts) + ". "
+        f"Total budget is ${total_budget}. Let them know they can add, remove, or ask about budget "
+        "at any point."
+    )
+    logger.info("Trip intake complete for trip %s (%s)", trip_id, destination)
+
+
+def _caller_phone(call: guava.Call) -> str | None:
+    call_info = call.call_info
+    if call_info.call_type == "pstn":
+        return call_info.from_number
+    return None
