@@ -16,7 +16,9 @@ def category_budget_split(total_budget: float, spend_priorities: str) -> dict[st
 
 
 def committed_and_proposed_total(trip_id: str) -> float:
-    items = db.list_itinerary_items(trip_id)
+    """Only confirmed items count as real spend. Proposed alternatives are
+    candidates the caller hasn't committed to yet and don't consume budget."""
+    items = db.list_itinerary_items(trip_id, status="confirmed")
     return sum(item["cost"] or 0 for item in items)
 
 
@@ -41,7 +43,6 @@ def generate_tradeoffs(trip_id: str, item: dict, over_amount: float) -> list[dic
 
         conn = sqlite3.connect(db.DB_PATH)
         conn.row_factory = sqlite3.Row
-        price_col = "price" if table != "restaurants" else "price_tier"
         if table != "restaurants":
             rows = conn.execute(
                 f"SELECT * FROM {table} WHERE price < ? ORDER BY price DESC LIMIT 1",
@@ -58,8 +59,8 @@ def generate_tradeoffs(trip_id: str, item: dict, over_amount: float) -> list[dic
         else:
             conn.close()
 
-    items = db.list_itinerary_items(trip_id)
-    optional_items = [i for i in items if i["priority"] == "optional" and i["status"] == "proposed"]
+    items = db.list_itinerary_items(trip_id, status="confirmed")
+    optional_items = [i for i in items if i["priority"] == "optional"]
     if optional_items:
         drop = optional_items[-1]
         tradeoffs.append({

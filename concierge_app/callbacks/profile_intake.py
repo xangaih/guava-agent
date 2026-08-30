@@ -4,7 +4,7 @@ import guava
 
 from concierge_app import db
 from concierge_app.agent import agent
-from concierge_app.specialists import budget, hotels, restaurants
+from concierge_app.specialists import budget, experiences, hotels, restaurants
 
 logger = logging.getLogger("concierge.profile_intake")
 
@@ -58,6 +58,7 @@ def on_trip_intake_complete(call: guava.Call):
     city = destination.split(",")[0].strip()
     proposed_hotels = hotels.propose_hotels(trip_id, city, interests)
     proposed_restaurants = restaurants.propose_restaurants(trip_id, city, interests)
+    proposed_experiences = experiences.propose_experiences(trip_id, city, interests)
 
     summary_parts = []
     if proposed_hotels:
@@ -67,6 +68,10 @@ def on_trip_intake_complete(call: guava.Call):
     if proposed_restaurants:
         summary_parts.append(
             "restaurants: " + ", ".join(f"{r['name']} ({r['price_tier']})" for r in proposed_restaurants)
+        )
+    if proposed_experiences:
+        summary_parts.append(
+            "experiences: " + ", ".join(f"{e['name']} (${e['cost']:.0f})" for e in proposed_experiences)
         )
 
     call.send_instruction(
