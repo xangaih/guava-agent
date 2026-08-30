@@ -16,7 +16,7 @@ import logging
 import guava
 from guava.events import CallerSpeechEvent
 
-from concierge_app import db, style_detect, voice_styles
+from concierge_app import db, status_store, style_detect, voice_styles
 from concierge_app.agent import agent
 from concierge_app.callbacks.profile_intake import start_trip_intake
 
@@ -77,6 +77,7 @@ def on_caller_speech(call: guava.Call, event: CallerSpeechEvent):
     """Listen to how the caller talks and quietly match their register."""
     if not event.utterance:
         return
+    status_store.append_transcript("caller", event.utterance)
 
     buffer = _utterances.get(call.id)
     if buffer is None:
