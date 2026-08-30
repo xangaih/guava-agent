@@ -2,4 +2,9 @@
 name = "my-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["guava-sdk", "typing_extensions"]
+dependencies = [
+    "fastapi>=0.141.1",
+    "guava-sdk",
+    "typing_extensions",
+    "uvicorn>=0.52.4",
+]

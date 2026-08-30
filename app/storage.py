@@ -24,6 +24,13 @@ def init_db():
     conn.close()
 
 
+def _mask_policy_number(policy_number: str | None) -> str | None:
+    if not policy_number:
+        return policy_number
+    tail = policy_number[-3:]
+    return "•" * max(len(policy_number) - 3, 0) + tail
+
+
 def save_claim(call_id: str, fields: dict) -> str:
     confirmation_code = secrets.token_hex(3).upper()
     conn = sqlite3.connect(DB_PATH)
@@ -34,7 +41,7 @@ def save_claim(call_id: str, fields: dict) -> str:
         """,
         (
             confirmation_code,
-            fields.get("policy_number"),
+            _mask_policy_number(fields.get("policy_number")),
             fields.get("incident_date"),
             fields.get("description"),
             fields.get("callback_number"),

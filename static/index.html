@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ClaimLine — Live Ops</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0f14;
+    --panel: #12181f;
+    --border: #232c36;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #3fb950;
+    --accent-dim: #1f6f34;
+    --redact: #f0883e;
+    --sev-low: #3fb950;
+    --sev-medium: #d29922;
+    --sev-high: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 24px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 4px 0;
+    letter-spacing: 0.02em;
+  }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 12px 0;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--muted);
+    margin-right: 8px;
+  }
+  .status-dot.live {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  .status-line { font-size: 15px; margin-bottom: 14px; }
+  .customer-card {
+    background: #0e1319;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .customer-card .name { font-size: 16px; font-weight: 600; }
+  .customer-card .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .no-customer { color: var(--muted); font-size: 13px; font-style: italic; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  .redacted { color: var(--redact); font-family: monospace; }
+  .empty-row { color: var(--muted); font-style: italic; text-align: center; padding: 24px; }
+  .transcript {
+    max-height: 320px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .transcript .line { margin-bottom: 6px; }
+  .transcript .speaker-agent { color: var(--accent); font-weight: 600; }
+  .transcript .speaker-caller { color: #58a6ff; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1>ClaimLine — Live Ops</h1>
+  <div class="subtitle">Harbor Mutual Insurance · local demo dashboard</div>
+
+  <div class="grid">
+    <div>
+      <div class="panel" style="margin-bottom: 20px;">
+        <h2>Call Status</h2>
+        <div class="status-line">
+          <span id="status-dot" class="status-dot"></span>
+          <span id="status-text">No active call</span>
+        </div>
+        <div id="customer-block"><div class="no-customer">No caller identified</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>Live Transcript</h2>
+        <div id="transcript" class="transcript"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Filed Claims</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Confirmation</th>
+            <th>Policy #</th>
+            <th>Incident Date</th>
+            <th>Description</th>
+            <th>Callback</th>
+            <th>Filed At</th>
+          </tr>
+        </thead>
+        <tbody id="claims-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+async function poll() {
+  try {
+    const [statusRes, claimsRes, transcriptRes] = await Promise.all([
+      fetch('/api/status'),
+      fetch('/api/claims'),
+      fetch('/api/transcript'),
+    ]);
+    const status = await statusRes.json();
+    const claims = await claimsRes.json();
+    const transcript = await transcriptRes.json();
+    renderStatus(status);
+    renderClaims(claims);
+    renderTranscript(transcript);
+  } catch (e) {
+    // Dashboard keeps polling even if a request fails transiently.
+  }
+}
+
+function renderStatus(status) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  const block = document.getElementById('customer-block');
+  if (status.active_call) {
+    dot.classList.add('live');
+    text.textContent = 'Call in progress';
+  } else {
+    dot.classList.remove('live');
+    text.textContent = 'No active call';
+  }
+  if (status.customer) {
+    const c = status.customer;
+    block.innerHTML = `<div class="customer-card">
+      <div class="name">${escapeHtml(c.name)}</div>
+      <div class="meta">${escapeHtml(c.plan)} · member since ${escapeHtml(String(c.member_since))}</div>
+      <div class="meta redacted">policy •••${escapeHtml(String(c.policy_number)).slice(-3)}</div>
+    </div>`;
+  } else {
+    block.innerHTML = '<div class="no-customer">No caller identified</div>';
+  }
+}
+
+function renderClaims(claims) {
+  const body = document.getElementById('claims-body');
+  if (!claims.length) {
+    body.innerHTML = '<tr><td class="empty-row" colspan="6">No claims filed yet</td></tr>';
+    return;
+  }
+  body.innerHTML = claims.map(c => `<tr>
+    <td>${escapeHtml(c.id)}</td>
+    <td class="redacted">${escapeHtml(c.policy_number || '')}</td>
+    <td>${escapeHtml(c.incident_date || '')}</td>
+    <td>${escapeHtml(c.description || '')}</td>
+    <td>${escapeHtml(c.callback_number || '')}</td>
+    <td>${escapeHtml(c.created_at || '')}</td>
+  </tr>`).join('');
+}
+
+function renderTranscript(lines) {
+  const el = document.getElementById('transcript');
+  if (!lines.length) {
+    el.innerHTML = '<div class="no-customer">No transcript yet</div>';
+    return;
+  }
+  el.innerHTML = lines.map(l => `<div class="line">
+    <span class="speaker-${l.speaker === 'agent' ? 'agent' : 'caller'}">${l.speaker === 'agent' ? 'Riley' : 'Caller'}:</span>
+    ${escapeHtml(l.utterance)}
+  </div>`).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[m]));
+}
+
+poll();
+setInterval(poll, 1500);
+</script>
+</body>
+</html>
