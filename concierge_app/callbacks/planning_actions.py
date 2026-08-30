@@ -52,7 +52,17 @@ def _find_item(trip_id: str, request_text: str, statuses=("proposed",)):
         (trip_id, *statuses),
     ).fetchall()]
 
+    request_lower = (request_text or "").lower()
     request_words = _words(request_text)
+
+    # Exact-title substring match is the strongest signal (handles short,
+    # single-word names like "Kikunoi" that word-overlap scoring alone can't
+    # distinguish from ambient noise).
+    for item in items:
+        if item["title"].lower() in request_lower:
+            conn.close()
+            return item
+
     best_item, best_score = None, 0
     for item in items:
         blob_words = _words(item["title"]) | _words(item.get("location", ""))
