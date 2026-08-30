@@ -1,14 +1,15 @@
 import argparse
 import os
 
-from app.env import load_env
-from app.logging_setup import setup as setup_logging
+from concierge_app.env import load_env
+from concierge_app.logging_setup import setup as setup_logging
 
 load_env()
 
 from concierge_app.agent import agent
 from concierge_app.db import init_db
 
+import concierge_app.callbacks.voice_style  # noqa: F401
 import concierge_app.callbacks.lifecycle  # noqa: F401
 import concierge_app.callbacks.questions  # noqa: F401
 import concierge_app.callbacks.planning_actions  # noqa: F401
@@ -28,7 +29,10 @@ def main():
     init_db()
 
     if args.phone:
-        agent.listen_phone(os.environ["GUAVA_AGENT_NUMBER"])
+        number = os.environ.get("GUAVA_AGENT_NUMBER")
+        if not number:
+            parser.error("GUAVA_AGENT_NUMBER is not set - add it to .env at the repo root")
+        agent.listen_phone(number)
     elif args.webrtc:
         agent.listen_webrtc()
     elif args.local:
