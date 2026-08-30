@@ -190,8 +190,10 @@ def on_budget_status(call: guava.Call):
     )
 
 
-@agent.on_action("finalize_trip")
-def on_finalize_trip(call: guava.Call):
+def finalize_trip(call: guava.Call, closing_note: str = "Thank them and say their trip is ready to view."):
+    """Mark the trip finalized, recap it, and end the call. Shared by the explicit
+    'finalize_trip' intent and the trip_planning task's completion criteria, so the
+    call ends the same way whether the caller asks to wrap up or just runs out of asks."""
     trip_id = call.get_variable("trip_id")
     items = db.list_itinerary_items(trip_id, status="confirmed")
     total_cost = sum(i["cost"] or 0 for i in items)
@@ -209,4 +211,9 @@ def on_finalize_trip(call: guava.Call):
         f"on screen. Total confirmed spend: ${total_cost:.0f} of ${trip['total_budget']:.0f}."
         + ("" if within_budget else " Note the trip is slightly over budget.")
     )
-    call.hangup(final_instructions="Thank them and say their trip is ready to view.")
+    call.hangup(final_instructions=closing_note)
+
+
+@agent.on_action("finalize_trip")
+def on_finalize_trip(call: guava.Call):
+    finalize_trip(call)

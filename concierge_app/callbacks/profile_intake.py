@@ -4,6 +4,7 @@ import guava
 
 from concierge_app import db
 from concierge_app.agent import agent
+from concierge_app.callbacks.planning_actions import finalize_trip
 from concierge_app.specialists import budget, experiences, hotels, restaurants
 
 logger = logging.getLogger("concierge.profile_intake")
@@ -80,7 +81,26 @@ def on_trip_intake_complete(call: guava.Call):
         f"Total budget is ${total_budget}. Let them know they can add, remove, or ask about budget "
         "at any point."
     )
+
+    call.set_task(
+        "trip_planning",
+        objective=(
+            "Keep helping the traveler plan this trip: propose, add, or remove hotels, "
+            "restaurants, and experiences, answer budget questions, and walk through budget "
+            "tradeoffs if something they want doesn't fit. After you finish handling each "
+            "request, ask if there's anything else you can help them plan."
+        ),
+        completion_criteria=(
+            "The caller has said they're happy with the plan and don't need help with anything "
+            "else, or they've explicitly asked to finalize or wrap up the trip."
+        ),
+    )
     logger.info("Trip intake complete for trip %s (%s)", trip_id, destination)
+
+
+@agent.on_task_complete("trip_planning")
+def on_trip_planning_complete(call: guava.Call):
+    finalize_trip(call, closing_note="Thank them warmly for planning with Nomi and say goodbye.")
 
 
 def _caller_phone(call: guava.Call) -> str | None:
