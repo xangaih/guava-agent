@@ -89,6 +89,17 @@
   }
   .comic-panel img { max-width: 100%; border-radius: 8px; }
   .comic-fallback { font-size: 28px; }
+  .comic-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 14px;
+    background: linear-gradient(90deg, var(--accent), #7ee787);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .comic-stats { margin-top: 14px; color: var(--muted); font-size: 13px; letter-spacing: 0.02em; }
+  .comic-stats .amt { color: var(--text); font-weight: 600; }
   .status-line { display: flex; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 20px; }
   .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 8px; }
   .status-dot.live { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
@@ -148,7 +159,7 @@ async function poll() {
     const transcript = await transcriptRes.json();
     renderBudget(trip, items);
     renderItinerary(items);
-    renderComic(comic);
+    renderComic(comic, trip, items);
     renderStatus(status);
     renderTranscript(transcript);
   } catch (e) {
@@ -233,7 +244,7 @@ function cardHtml(item) {
   </div>`;
 }
 
-function renderComic(comic) {
+function renderComic(comic, trip, items) {
   const el = document.getElementById('comic-panel');
   if (!comic) {
     el.innerHTML = '';
@@ -241,9 +252,16 @@ function renderComic(comic) {
   }
   if (comic.fallback) {
     el.innerHTML = '<div class="comic-panel"><div class="comic-fallback">🎉 Your trip is booked!</div></div>';
-  } else {
-    el.innerHTML = `<div class="comic-panel"><img src="${escapeHtml(comic.image_url)}" alt="Trip comic" /></div>`;
+    return;
   }
+  const confirmed = (items || []).filter(i => i.status === 'confirmed');
+  const spent = confirmed.reduce((sum, i) => sum + (i.cost || 0), 0);
+  const destination = (trip && trip.destination) || 'trip';
+  el.innerHTML = `<div class="comic-panel">
+    <div class="comic-title">🎉 Your ${escapeHtml(destination)} adventure is ready!</div>
+    <img src="${escapeHtml(comic.image_url)}" alt="Trip recap" />
+    <div class="comic-stats">${confirmed.length} stops planned · <span class="amt">$${spent.toFixed(0)}</span> spent</div>
+  </div>`;
 }
 
 function escapeHtml(s) {
