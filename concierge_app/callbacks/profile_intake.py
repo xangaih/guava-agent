@@ -92,6 +92,11 @@ def on_trip_intake_complete(call: guava.Call):
         "They can add, remove, or ask about budget at any point."
     )
 
+    start_trip_planning(call)
+    logger.info("Trip intake complete for trip %s (%s)", trip_id, destination)
+
+
+def start_trip_planning(call: guava.Call):
     call.set_task(
         "trip_planning",
         objective=(
@@ -107,12 +112,63 @@ def on_trip_intake_complete(call: guava.Call):
             "else, or they've explicitly asked to finalize or wrap up the trip."
         ),
     )
-    logger.info("Trip intake complete for trip %s (%s)", trip_id, destination)
 
 
 @agent.on_task_complete("trip_planning")
 def on_trip_planning_complete(call: guava.Call):
     finalize_trip(call, closing_note="Thank them warmly for planning with Nomi and say goodbye.")
+
+
+def offer_resume(call: guava.Call, trip: dict):
+    """A returning caller has an unfinished trip - ask whether to pick it back up
+    or start fresh, instead of assuming either way."""
+    call.set_variable("resume_trip_id", trip["id"])
+    call.send_instruction(
+        f"Warmly welcome them back. Mention they were previously planning a trip to "
+        f"{trip['destination']} with a ${trip['total_budget']:.0f} budget, and ask if they'd "
+        "like to keep planning that trip or start a new one instead. Keep it short - one question."
+    )
+    call.set_task(
+        "resume_check",
+        objective="Find out whether the caller wants to continue their previous trip or start a new one.",
+        checklist=[
+            guava.Field(
+                key="continue_or_new", field_type="multiple_choice",
+                choices=["continue_previous_trip", "start_new_trip"],
+                description="Whether they want to keep planning the previous trip or start over",
+            ),
+        ],
+        completion_criteria="The caller has indicated whether to continue the previous trip or start a new one.",
+    )
+
+
+@agent.on_task_complete("resume_check")
+def on_resume_check_complete(call: guava.Call):
+    trip_id = call.get_variable("resume_trip_id")
+    if call.get_field("continue_or_new") != "continue_previous_trip" or not trip_id:
+        start_trip_intake(call)
+        return
+
+    trip = db.get_trip(trip_id)
+    call.set_variable("trip_id", trip_id)
+    status_store.set_trip_id(trip_id)
+
+    confirmed = db.list_itinerary_items(trip_id, status="confirmed")
+    proposed = db.list_itinerary_items(trip_id, status="proposed")
+    recap_bits = []
+    if confirmed:
+        recap_bits.append("confirmed: " + ", ".join(i["title"] for i in confirmed))
+    if proposed:
+        recap_bits.append("still proposed: " + ", ".join(i["title"] for i in proposed))
+    recap = "; ".join(recap_bits) if recap_bits else "nothing locked in yet"
+
+    call.send_instruction(
+        f"Pick the {trip['destination']} trip back up. Briefly remind them where things stood "
+        f"({recap}) in one short line, then ask what they'd like to do next. Don't re-ask "
+        "anything already known - budget, destination, and pace are all already set."
+    )
+    start_trip_planning(call)
+    logger.info("Resumed trip %s (%s)", trip_id, trip["destination"])
 
 
 def caller_phone(call: guava.Call) -> str | None:

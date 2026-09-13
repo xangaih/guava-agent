@@ -5,7 +5,7 @@ from guava.events import AgentSpeechEvent, BotSessionEnded
 
 from concierge_app import db, status_store, voice_styles
 from concierge_app.agent import agent
-from concierge_app.callbacks.profile_intake import caller_phone, start_trip_intake
+from concierge_app.callbacks.profile_intake import caller_phone, offer_resume, start_trip_intake
 from concierge_app.callbacks.voice_style import forget_call, start_welcome
 
 logger = logging.getLogger("concierge.lifecycle")
@@ -19,14 +19,21 @@ def on_call_start(call: guava.Call):
     traveler = db.find_traveler_by_phone(caller_phone(call))
     saved_style = db.get_voice_style(traveler["id"]) if traveler else None
     caller_name = (traveler or {}).get("name")
+    active_trip = db.get_active_trip(traveler["id"]) if traveler else None
 
     if traveler:
         call.set_variable("traveler_id", traveler["id"])
     if caller_name:
         call.set_variable("caller_name", caller_name)
 
-    if saved_style:
-        # Returning caller - open in the voice and name they already gave us, no questions.
+    if active_trip:
+        # Returning caller with an unfinished trip - ask before assuming either way.
+        voice_styles.apply(call, voice_styles.get(saved_style), caller_name)
+        logger.info("Returning caller %s has an active trip (%s), offering to resume", caller_name, active_trip["id"])
+        offer_resume(call, active_trip)
+    elif saved_style:
+        # Returning caller, no unfinished trip - open in the voice and name they
+        # already gave us, no questions, straight into planning something new.
         voice_styles.apply(call, voice_styles.get(saved_style), caller_name)
         logger.info("Returning caller %s, restoring style %s", caller_name, saved_style)
         start_trip_intake(call)

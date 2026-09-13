@@ -236,6 +236,18 @@ def get_trip(trip_id: str) -> dict | None:
     return row
 
 
+def get_active_trip(traveler_id: str) -> dict | None:
+    """Most recent trip this traveler hasn't finalized yet, if any."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT * FROM trips WHERE traveler_id = %s AND status != 'finalized' "
+        "ORDER BY created_at DESC LIMIT 1",
+        (traveler_id,),
+    ).fetchone()
+    conn.close()
+    return row
+
+
 def get_traveler_profile(traveler_id: str) -> dict | None:
     conn = _connect()
     row = conn.execute(
