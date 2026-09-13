@@ -9,3 +9,6 @@ dependencies = [
     "typing_extensions",
     "uvicorn>=0.52.4",
 ]
+
+[tool.vercel]
+entrypoint = "concierge_dashboard:app"
