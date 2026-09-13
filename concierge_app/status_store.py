@@ -58,6 +58,17 @@ def get_status() -> dict:
     return {"active_call": row["active_call"], "trip_id": row["trip_id"]}
 
 
+def reset():
+    """Clear the board back to a blank state, independent of any real call."""
+    conn = _connect()
+    conn.execute(
+        "UPDATE call_status SET active_call = false, trip_id = NULL, transcript = '[]'::jsonb, "
+        "updated_at = now() WHERE id = %s",
+        (_ROW_ID,),
+    )
+    conn.close()
+
+
 def get_transcript() -> list[dict]:
     conn = _connect()
     row = conn.execute(

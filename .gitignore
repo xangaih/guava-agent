@@ -7,3 +7,5 @@ guava-starter/
 *.log
 call_status.json
 concierge_call_status.json
+.vercel
+.env*

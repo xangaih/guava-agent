@@ -236,13 +236,6 @@ def get_trip(trip_id: str) -> dict | None:
     return row
 
 
-def get_latest_trip() -> dict | None:
-    conn = _connect()
-    row = conn.execute("SELECT * FROM trips ORDER BY created_at DESC LIMIT 1").fetchone()
-    conn.close()
-    return row
-
-
 def get_traveler_profile(traveler_id: str) -> dict | None:
     conn = _connect()
     row = conn.execute(

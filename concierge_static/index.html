@@ -103,6 +103,17 @@
   .status-line { display: flex; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 20px; }
   .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 8px; }
   .status-dot.live { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .reset-btn {
+    margin-left: auto;
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .reset-btn:hover { color: var(--text); border-color: var(--muted); }
   .transcript-panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -127,6 +138,7 @@
   <div class="status-line">
     <span id="status-dot" class="status-dot"></span>
     <span id="status-text">No active call</span>
+    <button id="reset-btn" class="reset-btn">Reset board</button>
   </div>
 
   <div class="budget-panel">
@@ -269,6 +281,11 @@ function escapeHtml(s) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[m]));
 }
+
+document.getElementById('reset-btn').addEventListener('click', async () => {
+  await fetch('/api/reset', { method: 'POST' });
+  poll();
+});
 
 poll();
 setInterval(poll, 1500);

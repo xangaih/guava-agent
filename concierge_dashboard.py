@@ -26,14 +26,25 @@ def api_transcript():
     return status_store.get_transcript()
 
 
+@app.post("/api/reset")
+def api_reset():
+    status_store.reset()
+    return {"ok": True}
+
+
+def _current_trip():
+    trip_id = status_store.get_status()["trip_id"]
+    return db.get_trip(trip_id) if trip_id else None
+
+
 @app.get("/api/trip")
 def api_trip():
-    return db.get_latest_trip()
+    return _current_trip()
 
 
 @app.get("/api/itinerary")
 def api_itinerary():
-    trip = db.get_latest_trip()
+    trip = _current_trip()
     if not trip:
         return []
     return db.list_itinerary_items(trip["id"])
@@ -41,7 +52,7 @@ def api_itinerary():
 
 @app.get("/api/comic")
 def api_comic():
-    trip = db.get_latest_trip()
+    trip = _current_trip()
     if not trip:
         return None
     comic = db.get_latest_trip_comic(trip["id"])
