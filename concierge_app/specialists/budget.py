@@ -52,15 +52,7 @@ def generate_tradeoffs(trip_id: str, item: dict, over_amount: float) -> list[dic
 
     table = _category_table(item.get("item_type"))
     if table and table != "restaurants":
-        import sqlite3
-
-        conn = sqlite3.connect(db.DB_PATH)
-        conn.row_factory = sqlite3.Row
-        candidates = [dict(r) for r in conn.execute(
-            f"SELECT * FROM {table} WHERE price < ? AND city = ? COLLATE NOCASE ORDER BY price DESC",
-            (item["cost"], _city(item)),
-        ).fetchall()]
-        conn.close()
+        candidates = db.search_cheaper_in_city(table, _city(item), item["cost"])
         if candidates:
             item_neighborhood = _neighborhood(item)
             same_area = next((c for c in candidates if c["neighborhood"] == item_neighborhood), None)

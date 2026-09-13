@@ -1,10 +1,12 @@
-import json
-import sqlite3
+import os
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "concierge.db"
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Json
+
+DB_URL = os.environ["SUPABASE_DB_URL"]
 
 
 def _now() -> str:
@@ -15,127 +17,21 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS travelers (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    phone TEXT,
-    created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS traveler_profiles (
-    traveler_id TEXT PRIMARY KEY,
-    pace TEXT,
-    voice_style TEXT,
-    day_start TEXT,
-    day_end TEXT,
-    interests TEXT,
-    spend_priorities TEXT,
-    dietary_restrictions TEXT,
-    notes TEXT,
-    updated_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS trips (
-    id TEXT PRIMARY KEY,
-    traveler_id TEXT,
-    destination TEXT,
-    start_date TEXT,
-    end_date TEXT,
-    total_budget REAL,
-    status TEXT DEFAULT 'planning',
-    created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS category_budgets (
-    id TEXT PRIMARY KEY,
-    trip_id TEXT,
-    category TEXT,
-    target_amount REAL
-);
-
-CREATE TABLE IF NOT EXISTS hotels (
-    id TEXT PRIMARY KEY,
-    name TEXT, neighborhood TEXT, city TEXT,
-    price REAL, image_url TEXT, external_url TEXT,
-    tags TEXT, lat REAL, lng REAL
-);
-
-CREATE TABLE IF NOT EXISTS restaurants (
-    id TEXT PRIMARY KEY,
-    name TEXT, neighborhood TEXT, city TEXT, cuisine TEXT,
-    price_tier TEXT,
-    image_url TEXT, external_url TEXT,
-    tags TEXT, lat REAL, lng REAL
-);
-
-CREATE TABLE IF NOT EXISTS experiences (
-    id TEXT PRIMARY KEY,
-    name TEXT, city TEXT, category TEXT,
-    price REAL, duration_minutes INTEGER,
-    image_url TEXT, external_url TEXT, tags TEXT
-);
-
-CREATE TABLE IF NOT EXISTS itinerary_items (
-    id TEXT PRIMARY KEY,
-    trip_id TEXT,
-    day_date TEXT,
-    start_time TEXT, end_time TEXT,
-    item_type TEXT,
-    ref_id TEXT,
-    title TEXT, location TEXT,
-    cost REAL,
-    priority TEXT DEFAULT 'anchor',
-    status TEXT DEFAULT 'proposed',
-    notes TEXT,
-    created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS constraint_overrides (
-    id TEXT PRIMARY KEY,
-    trip_id TEXT,
-    constraint_name TEXT,
-    profile_value TEXT,
-    override_value TEXT,
-    scope TEXT,
-    reason TEXT,
-    user_confirmed INTEGER DEFAULT 1,
-    created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS trip_comics (
-    id TEXT PRIMARY KEY,
-    trip_id TEXT,
-    image_url TEXT,
-    created_at TEXT
-);
-"""
+def _connect() -> psycopg.Connection:
+    # prepare_threshold=None: Supavisor's transaction-mode pooler doesn't support
+    # server-side prepared statements, since pooled connections aren't pinned per client.
+    return psycopg.connect(DB_URL, row_factory=dict_row, autocommit=True, prepare_threshold=None)
 
 
 def init_db():
+    """Schema lives in Supabase migrations. Just seed reference data on first run."""
     conn = _connect()
-    conn.executescript(SCHEMA)
-    _migrate(conn)
-    conn.commit()
-    if conn.execute("SELECT COUNT(*) FROM hotels").fetchone()[0] == 0:
+    if conn.execute("SELECT COUNT(*) FROM hotels").fetchone()["count"] == 0:
         _seed(conn)
     conn.close()
 
 
-def _migrate(conn: sqlite3.Connection):
-    """Additive column migrations for databases created before a column existed."""
-    existing = {r["name"] for r in conn.execute("PRAGMA table_info(traveler_profiles)")}
-    if "voice_style" not in existing:
-        conn.execute("ALTER TABLE traveler_profiles ADD COLUMN voice_style TEXT")
-
-
-def _seed(conn: sqlite3.Connection):
+def _seed(conn: psycopg.Connection):
     hotels = [
         ("Nishiki Machiya Inn", "Nakagyo", "Kyoto", 145, "nishiki-machiya", ["boutique", "local", "traditional"]),
         ("Gion Ryokan Sora", "Higashiyama", "Kyoto", 290, "gion-ryokan-sora", ["boutique", "traditional", "romantic"]),
@@ -179,9 +75,9 @@ def _seed(conn: sqlite3.Connection):
     for name, neighborhood, city, price, seed, tags in hotels:
         conn.execute(
             "INSERT INTO hotels (id, name, neighborhood, city, price, image_url, external_url, tags) "
-            "VALUES (?, ?, ?, ?, ?, ?, '#', ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, '#', %s)",
             (_new_id(), name, neighborhood, city, price,
-             f"https://picsum.photos/seed/{seed}/600/400", json.dumps(tags)),
+             f"https://picsum.photos/seed/{seed}/600/400", Json(tags)),
         )
 
     restaurants = [
@@ -239,9 +135,9 @@ def _seed(conn: sqlite3.Connection):
     for name, neighborhood, city, cuisine, price_tier, seed, tags in restaurants:
         conn.execute(
             "INSERT INTO restaurants (id, name, neighborhood, city, cuisine, price_tier, image_url, external_url, tags) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, '#', ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, '#', %s)",
             (_new_id(), name, neighborhood, city, cuisine, price_tier,
-             f"https://picsum.photos/seed/{seed}/600/400", json.dumps(tags)),
+             f"https://picsum.photos/seed/{seed}/600/400", Json(tags)),
         )
 
     experiences = [
@@ -286,21 +182,19 @@ def _seed(conn: sqlite3.Connection):
     for name, city, category, price, duration, seed, tags in experiences:
         conn.execute(
             "INSERT INTO experiences (id, name, city, category, price, duration_minutes, image_url, external_url, tags) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, '#', ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, '#', %s)",
             (_new_id(), name, city, category, price, duration,
-             f"https://picsum.photos/seed/{seed}/600/400", json.dumps(tags)),
+             f"https://picsum.photos/seed/{seed}/600/400", Json(tags)),
         )
-    conn.commit()
 
 
 def insert_traveler(name: str, phone: str | None) -> str:
     traveler_id = _new_id()
     conn = _connect()
     conn.execute(
-        "INSERT INTO travelers (id, name, phone, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO travelers (id, name, phone, created_at) VALUES (%s, %s, %s, %s)",
         (traveler_id, name, phone, _now()),
     )
-    conn.commit()
     conn.close()
     return traveler_id
 
@@ -310,13 +204,16 @@ def insert_traveler_profile(traveler_id: str, pace: str, interests: list[str], s
                              voice_style: str | None = None):
     conn = _connect()
     conn.execute(
-        "INSERT OR REPLACE INTO traveler_profiles (traveler_id, pace, voice_style, day_start, day_end, "
+        "INSERT INTO traveler_profiles (traveler_id, pace, voice_style, day_start, day_end, "
         "interests, spend_priorities, dietary_restrictions, notes, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (traveler_id, pace, voice_style, day_start, day_end, json.dumps(interests), spend_priorities,
-         json.dumps([]), "", _now()),
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (traveler_id) DO UPDATE SET pace = excluded.pace, voice_style = excluded.voice_style, "
+        "day_start = excluded.day_start, day_end = excluded.day_end, interests = excluded.interests, "
+        "spend_priorities = excluded.spend_priorities, dietary_restrictions = excluded.dietary_restrictions, "
+        "notes = excluded.notes, updated_at = excluded.updated_at",
+        (traveler_id, pace, voice_style, day_start, day_end, Json(interests), spend_priorities,
+         Json([]), "", _now()),
     )
-    conn.commit()
     conn.close()
 
 
@@ -325,33 +222,34 @@ def insert_trip(traveler_id: str, destination: str, days: int, total_budget: flo
     conn = _connect()
     conn.execute(
         "INSERT INTO trips (id, traveler_id, destination, start_date, end_date, total_budget, status, created_at) "
-        "VALUES (?, ?, ?, NULL, NULL, ?, 'planning', ?)",
+        "VALUES (%s, %s, %s, NULL, NULL, %s, 'planning', %s)",
         (trip_id, traveler_id, destination, total_budget, _now()),
     )
-    conn.commit()
     conn.close()
     return trip_id
 
 
 def get_trip(trip_id: str) -> dict | None:
     conn = _connect()
-    row = conn.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
+    row = conn.execute("SELECT * FROM trips WHERE id = %s", (trip_id,)).fetchone()
     conn.close()
-    return dict(row) if row else None
+    return row
+
+
+def get_latest_trip() -> dict | None:
+    conn = _connect()
+    row = conn.execute("SELECT * FROM trips ORDER BY created_at DESC LIMIT 1").fetchone()
+    conn.close()
+    return row
 
 
 def get_traveler_profile(traveler_id: str) -> dict | None:
     conn = _connect()
     row = conn.execute(
-        "SELECT * FROM traveler_profiles WHERE traveler_id = ?", (traveler_id,)
+        "SELECT * FROM traveler_profiles WHERE traveler_id = %s", (traveler_id,)
     ).fetchone()
     conn.close()
-    if not row:
-        return None
-    data = dict(row)
-    data["interests"] = json.loads(data["interests"] or "[]")
-    data["dietary_restrictions"] = json.loads(data["dietary_restrictions"] or "[]")
-    return data
+    return row
 
 
 def find_traveler_by_phone(phone: str | None) -> dict | None:
@@ -359,10 +257,10 @@ def find_traveler_by_phone(phone: str | None) -> dict | None:
         return None
     conn = _connect()
     row = conn.execute(
-        "SELECT * FROM travelers WHERE phone = ? ORDER BY created_at DESC LIMIT 1", (phone,)
+        "SELECT * FROM travelers WHERE phone = %s ORDER BY created_at DESC LIMIT 1", (phone,)
     ).fetchone()
     conn.close()
-    return dict(row) if row else None
+    return row
 
 
 def get_voice_style(traveler_id: str | None) -> str | None:
@@ -370,7 +268,7 @@ def get_voice_style(traveler_id: str | None) -> str | None:
         return None
     conn = _connect()
     row = conn.execute(
-        "SELECT voice_style FROM traveler_profiles WHERE traveler_id = ?", (traveler_id,)
+        "SELECT voice_style FROM traveler_profiles WHERE traveler_id = %s", (traveler_id,)
     ).fetchone()
     conn.close()
     return row["voice_style"] if row else None
@@ -378,8 +276,7 @@ def get_voice_style(traveler_id: str | None) -> str | None:
 
 def set_traveler_name(traveler_id: str, name: str):
     conn = _connect()
-    conn.execute("UPDATE travelers SET name = ? WHERE id = ?", (name, traveler_id))
-    conn.commit()
+    conn.execute("UPDATE travelers SET name = %s WHERE id = %s", (name, traveler_id))
     conn.close()
 
 
@@ -387,12 +284,11 @@ def set_voice_style(traveler_id: str, voice_style: str):
     """Remember the caller's preferred style so the next call opens in it."""
     conn = _connect()
     conn.execute(
-        "INSERT INTO traveler_profiles (traveler_id, voice_style, updated_at) VALUES (?, ?, ?) "
-        "ON CONFLICT(traveler_id) DO UPDATE SET voice_style = excluded.voice_style, "
+        "INSERT INTO traveler_profiles (traveler_id, voice_style, updated_at) VALUES (%s, %s, %s) "
+        "ON CONFLICT (traveler_id) DO UPDATE SET voice_style = excluded.voice_style, "
         "updated_at = excluded.updated_at",
         (traveler_id, voice_style, _now()),
     )
-    conn.commit()
     conn.close()
 
 
@@ -400,10 +296,9 @@ def insert_category_budgets(trip_id: str, split: dict[str, float]):
     conn = _connect()
     for category, amount in split.items():
         conn.execute(
-            "INSERT INTO category_budgets (id, trip_id, category, target_amount) VALUES (?, ?, ?, ?)",
+            "INSERT INTO category_budgets (id, trip_id, category, target_amount) VALUES (%s, %s, %s, %s)",
             (_new_id(), trip_id, category, amount),
         )
-    conn.commit()
     conn.close()
 
 
@@ -421,11 +316,9 @@ def search_experiences(city: str, interests: list[str], limit: int = 3) -> list[
 
 def _search_by_tags(table: str, city: str, interests: list[str], limit: int) -> list[dict]:
     conn = _connect()
-    rows = conn.execute(f"SELECT * FROM {table} WHERE city = ? COLLATE NOCASE", (city,)).fetchall()
+    rows = conn.execute(f"SELECT * FROM {table} WHERE lower(city) = lower(%s)", (city,)).fetchall()
     conn.close()
-    items = [dict(r) for r in rows]
-    for item in items:
-        item["tags"] = json.loads(item["tags"] or "[]")
+    items = list(rows)
 
     def overlap(item):
         return len(set(item["tags"]) & set(t.lower() for t in interests))
@@ -443,11 +336,10 @@ def insert_itinerary_item(trip_id: str, item_type: str, ref_id: str | None, titl
     conn.execute(
         "INSERT INTO itinerary_items (id, trip_id, day_date, start_time, end_time, item_type, "
         "ref_id, title, location, cost, priority, status, notes, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)",
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, '', %s)",
         (item_id, trip_id, day_date, start_time, end_time, item_type, ref_id, title,
          location, cost, priority, status, _now()),
     )
-    conn.commit()
     conn.close()
     return item_id
 
@@ -456,9 +348,8 @@ def update_itinerary_item(item_id: str, **fields):
     if not fields:
         return
     conn = _connect()
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
-    conn.execute(f"UPDATE itinerary_items SET {set_clause} WHERE id = ?", (*fields.values(), item_id))
-    conn.commit()
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    conn.execute(f"UPDATE itinerary_items SET {set_clause} WHERE id = %s", (*fields.values(), item_id))
     conn.close()
 
 
@@ -466,16 +357,16 @@ def list_itinerary_items(trip_id: str, status: str | None = None) -> list[dict]:
     conn = _connect()
     if status:
         rows = conn.execute(
-            "SELECT * FROM itinerary_items WHERE trip_id = ? AND status = ? ORDER BY day_date, start_time",
+            "SELECT * FROM itinerary_items WHERE trip_id = %s AND status = %s ORDER BY day_date, start_time",
             (trip_id, status),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM itinerary_items WHERE trip_id = ? AND status != 'removed' ORDER BY day_date, start_time",
+            "SELECT * FROM itinerary_items WHERE trip_id = %s AND status != 'removed' ORDER BY day_date, start_time",
             (trip_id,),
         ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return list(rows)
 
 
 def insert_constraint_override(trip_id: str, constraint_name: str, profile_value: str,
@@ -483,27 +374,62 @@ def insert_constraint_override(trip_id: str, constraint_name: str, profile_value
     conn = _connect()
     conn.execute(
         "INSERT INTO constraint_overrides (id, trip_id, constraint_name, profile_value, "
-        "override_value, scope, reason, user_confirmed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+        "override_value, scope, reason, user_confirmed, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, true, %s)",
         (_new_id(), trip_id, constraint_name, profile_value, override_value, scope, reason, _now()),
     )
-    conn.commit()
     conn.close()
 
 
 def insert_trip_comic(trip_id: str, image_url: str):
     conn = _connect()
     conn.execute(
-        "INSERT INTO trip_comics (id, trip_id, image_url, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO trip_comics (id, trip_id, image_url, created_at) VALUES (%s, %s, %s, %s)",
         (_new_id(), trip_id, image_url, _now()),
     )
-    conn.commit()
     conn.close()
+
+
+def update_trip(trip_id: str, **fields):
+    if not fields:
+        return
+    conn = _connect()
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    conn.execute(f"UPDATE trips SET {set_clause} WHERE id = %s", (*fields.values(), trip_id))
+    conn.close()
+
+
+def get_itinerary_items_by_statuses(trip_id: str, statuses: tuple[str, ...]) -> list[dict]:
+    conn = _connect()
+    placeholders = ", ".join(["%s"] * len(statuses))
+    rows = conn.execute(
+        f"SELECT * FROM itinerary_items WHERE trip_id = %s AND status IN ({placeholders})",
+        (trip_id, *statuses),
+    ).fetchall()
+    conn.close()
+    return list(rows)
+
+
+def get_item_by_ref(table: str, ref_id: str) -> dict | None:
+    conn = _connect()
+    row = conn.execute(f"SELECT * FROM {table} WHERE id = %s", (ref_id,)).fetchone()
+    conn.close()
+    return row
+
+
+def search_cheaper_in_city(table: str, city: str, max_price: float) -> list[dict]:
+    conn = _connect()
+    rows = conn.execute(
+        f"SELECT * FROM {table} WHERE price < %s AND lower(city) = lower(%s) ORDER BY price DESC",
+        (max_price, city),
+    ).fetchall()
+    conn.close()
+    return list(rows)
 
 
 def get_latest_trip_comic(trip_id: str) -> dict | None:
     conn = _connect()
     row = conn.execute(
-        "SELECT * FROM trip_comics WHERE trip_id = ? ORDER BY created_at DESC LIMIT 1", (trip_id,)
+        "SELECT * FROM trip_comics WHERE trip_id = %s ORDER BY created_at DESC LIMIT 1", (trip_id,)
     ).fetchone()
     conn.close()
-    return dict(row) if row else None
+    return row

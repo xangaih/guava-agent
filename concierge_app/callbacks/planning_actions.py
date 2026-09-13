@@ -47,15 +47,7 @@ def _words(text: str) -> set[str]:
 
 
 def _find_item(trip_id: str, request_text: str, statuses=("proposed",)):
-    import json
-    import sqlite3
-
-    conn = sqlite3.connect(db.DB_PATH)
-    conn.row_factory = sqlite3.Row
-    items = [dict(r) for r in conn.execute(
-        f"SELECT * FROM itinerary_items WHERE trip_id = ? AND status IN ({','.join('?' * len(statuses))})",
-        (trip_id, *statuses),
-    ).fetchall()]
+    items = db.get_itinerary_items_by_statuses(trip_id, statuses)
 
     request_lower = (request_text or "").lower()
     request_words = _words(request_text)
@@ -65,7 +57,6 @@ def _find_item(trip_id: str, request_text: str, statuses=("proposed",)):
     # distinguish from ambient noise).
     for item in items:
         if item["title"].lower() in request_lower:
-            conn.close()
             return item
 
     best_item, best_score = None, 0
@@ -73,15 +64,13 @@ def _find_item(trip_id: str, request_text: str, statuses=("proposed",)):
         blob_words = _words(item["title"]) | _words(item.get("location", ""))
         table = {"hotel": "hotels", "restaurant": "restaurants", "experience": "experiences"}.get(item["item_type"])
         if table and item["ref_id"]:
-            row = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (item["ref_id"],)).fetchone()
-            if row:
-                extra = dict(row)
+            extra = db.get_item_by_ref(table, item["ref_id"])
+            if extra:
                 blob_words |= _words(extra.get("cuisine", ""))
-                blob_words |= _words(" ".join(json.loads(extra.get("tags") or "[]")))
+                blob_words |= _words(" ".join(extra.get("tags") or []))
         score = len(blob_words & request_words)
         if score > best_score:
             best_item, best_score = item, score
-    conn.close()
     return best_item if best_score >= 2 else None
 
 
@@ -168,11 +157,7 @@ def on_raise_budget(call: guava.Call):
     over_amount = pending["over_amount"]
     new_budget = trip["total_budget"] + over_amount
 
-    import sqlite3
-    conn = sqlite3.connect(db.DB_PATH)
-    conn.execute("UPDATE trips SET total_budget = ? WHERE id = ?", (new_budget, trip_id))
-    conn.commit()
-    conn.close()
+    db.update_trip(trip_id, total_budget=new_budget)
 
     db.insert_constraint_override(
         trip_id=trip_id,
@@ -223,11 +208,7 @@ def finalize_trip(call: guava.Call, closing_note: str = "Thank them and say thei
     trip = db.get_trip(trip_id)
 
     within_budget = total_cost <= (trip["total_budget"] or 0)
-    import sqlite3
-    conn = sqlite3.connect(db.DB_PATH)
-    conn.execute("UPDATE trips SET status = 'finalized' WHERE id = ?", (trip_id,))
-    conn.commit()
-    conn.close()
+    db.update_trip(trip_id, status="finalized")
 
     city = (trip["destination"] or "").split(",")[0].strip().lower()
     recap_image = _CITY_RECAP_IMAGES.get(city)
