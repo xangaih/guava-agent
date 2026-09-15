@@ -66,6 +66,10 @@ def on_trip_intake_complete(call: guava.Call):
     # Match free-form destination text to the city our catalog actually covers -
     # "Italy" resolves to "Rome" instead of matching nothing.
     city = semantic_match.match_city(destination) or destination.split(",")[0].strip()
+    _propose_for_trip(call, trip_id, city, interests, float(total_budget))
+
+
+def _propose_for_trip(call: guava.Call, trip_id: str, city: str, interests: list[str], total_budget: float):
     proposed_hotels = hotels.propose_hotels(trip_id, city, interests, count=1)
     proposed_restaurants = restaurants.propose_restaurants(trip_id, city, interests, count=1)
     proposed_experiences = experiences.propose_experiences(trip_id, city, interests, count=1)
@@ -84,11 +88,10 @@ def on_trip_intake_complete(call: guava.Call):
             "experience: " + ", ".join(f"{e['name']} (${e['cost']:.0f})" for e in proposed_experiences)
         )
     if not summary_parts:
-        call.send_instruction(
-            f"Apologize that this demo doesn't have options for {destination} yet - it only "
-            f"covers {', '.join(semantic_match.KNOWN_CITIES)}. Ask if they'd like to plan a trip "
-            "to one of those instead."
-        )
+        # Don't just apologize and leave the call with nothing to act on - actually get
+        # a city we can work with and save it, instead of a dead end that only ever
+        # existed in speech.
+        _offer_city_choice(call, trip_id, city, interests, total_budget)
         return
 
     call.send_instruction(
@@ -97,12 +100,46 @@ def on_trip_intake_complete(call: guava.Call):
         "asked) and pause for their reaction. Only after they respond, bring up the restaurant; "
         "only after that, the experience. Never state more than one option in a single turn. "
         "Here's what's available if it comes up: " + "; ".join(summary_parts) + ". "
-        f"Their total budget is ${total_budget}, but lead with the places, not the numbers. "
+        f"Their total budget is ${total_budget:.0f}, but lead with the places, not the numbers. "
         "They can add, remove, or ask about budget at any point."
     )
 
     start_trip_planning(call)
-    logger.info("Trip intake complete for trip %s (%s)", trip_id, destination)
+    logger.info("Proposed options for trip %s (%s)", trip_id, city)
+
+
+def _offer_city_choice(call: guava.Call, trip_id: str, invalid_city: str, interests: list[str], total_budget: float):
+    call.set_variable("retry_trip_id", trip_id)
+    call.set_variable("retry_interests", interests)
+    call.set_variable("retry_budget", total_budget)
+    call.send_instruction(
+        f"Apologize that this demo doesn't have options for {invalid_city} yet - it only covers "
+        f"{', '.join(semantic_match.KNOWN_CITIES)}. Ask which of those they'd like instead."
+    )
+    call.set_task(
+        "destination_retry",
+        objective="Get a destination from the caller that this demo actually supports.",
+        checklist=[
+            guava.Field(
+                key="destination", field_type="multiple_choice",
+                choices=semantic_match.KNOWN_CITIES,
+                description="Which supported city they want to visit instead",
+            ),
+        ],
+        completion_criteria="The caller has picked one of the supported cities.",
+    )
+
+
+@agent.on_task_complete("destination_retry")
+def on_destination_retry_complete(call: guava.Call):
+    trip_id = call.get_variable("retry_trip_id")
+    interests = call.get_variable("retry_interests") or []
+    total_budget = call.get_variable("retry_budget") or 3000
+    new_city = call.get_field("destination")
+
+    db.update_trip(trip_id, destination=new_city)
+    _propose_for_trip(call, trip_id, new_city, interests, total_budget)
+    logger.info("Retried destination for trip %s -> %s", trip_id, new_city)
 
 
 def start_trip_planning(call: guava.Call):
