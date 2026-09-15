@@ -250,9 +250,21 @@ _STYLE_CUES = {
 }
 
 
+_NEGATION_WORDS = {"stop", "quit", "don", "without", "less", "enough"}
+
+
 def _style_from_request(request: str) -> str | None:
-    """Best-effort mapping of 'talk more X' to a style key; falls back to the default."""
+    """Best-effort mapping of 'talk more X' to a style key; falls back to the default.
+
+    "genz" cue words like "slang" or "casual" are also the words someone uses to
+    ask the agent to STOP sounding that way ("stop using Gen Z slang"), which reads
+    as evidence *for* genz on a plain word-overlap match. Negation flips it.
+    """
     words = _words(request)
     scores = {key: len(words & set(cues)) for key, cues in _STYLE_CUES.items()}
     best = max(scores, key=scores.get)
-    return best if scores[best] else None
+    if not scores[best]:
+        return None
+    if best == "genz" and words & _NEGATION_WORDS:
+        return "friendly"
+    return best
