@@ -6,6 +6,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from concierge_app import semantic_match
+
 DB_URL = os.environ["SUPABASE_DB_URL"]
 
 
@@ -72,12 +74,15 @@ def _seed(conn: psycopg.Connection):
         ("Chinatown Budget Rooms", "Chinatown", "Bangkok", 45, "bkk-chinatown", ["budget", "local"]),
         ("Silom Backpacker Hostel", "Silom", "Bangkok", 25, "bkk-silom", ["budget", "hostel"]),
     ]
-    for name, neighborhood, city, price, seed, tags in hotels:
+    hotel_embeddings = semantic_match.embed_batch(
+        [f"{name} {neighborhood} {city} {' '.join(tags)}" for name, neighborhood, city, price, seed, tags in hotels]
+    )
+    for (name, neighborhood, city, price, seed, tags), embedding in zip(hotels, hotel_embeddings):
         conn.execute(
-            "INSERT INTO hotels (id, name, neighborhood, city, price, image_url, external_url, tags) "
-            "VALUES (%s, %s, %s, %s, %s, %s, '#', %s)",
+            "INSERT INTO hotels (id, name, neighborhood, city, price, image_url, external_url, tags, embedding) "
+            "VALUES (%s, %s, %s, %s, %s, %s, '#', %s, %s)",
             (_new_id(), name, neighborhood, city, price,
-             f"https://picsum.photos/seed/{seed}/600/400", Json(tags)),
+             f"https://picsum.photos/seed/{seed}/600/400", Json(tags), Json(embedding)),
         )
 
     restaurants = [
@@ -132,12 +137,16 @@ def _seed(conn: psycopg.Connection):
         ("Silom Vegetarian Kitchen", "Silom", "Bangkok", "vegetarian thai", "$$", "bkk-silomveg", ["vegetarian_friendly", "casual"]),
         ("Chatuchak Weekend Bites", "Chinatown", "Bangkok", "street food", "$", "bkk-chatuchak", ["casual", "local"]),
     ]
-    for name, neighborhood, city, cuisine, price_tier, seed, tags in restaurants:
+    restaurant_embeddings = semantic_match.embed_batch(
+        [f"{name} {neighborhood} {city} {cuisine} {' '.join(tags)}"
+         for name, neighborhood, city, cuisine, price_tier, seed, tags in restaurants]
+    )
+    for (name, neighborhood, city, cuisine, price_tier, seed, tags), embedding in zip(restaurants, restaurant_embeddings):
         conn.execute(
-            "INSERT INTO restaurants (id, name, neighborhood, city, cuisine, price_tier, image_url, external_url, tags) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, '#', %s)",
+            "INSERT INTO restaurants (id, name, neighborhood, city, cuisine, price_tier, image_url, external_url, tags, embedding) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, '#', %s, %s)",
             (_new_id(), name, neighborhood, city, cuisine, price_tier,
-             f"https://picsum.photos/seed/{seed}/600/400", Json(tags)),
+             f"https://picsum.photos/seed/{seed}/600/400", Json(tags), Json(embedding)),
         )
 
     experiences = [
@@ -179,12 +188,15 @@ def _seed(conn: psycopg.Connection):
         ("Muay Thai Show Night", "Bangkok", "cultural", 40, 90, "bkk-muaythai", ["cultural", "nightlife"]),
         ("Floating Market Boat Tour", "Bangkok", "adventure", 45, 180, "bkk-floatingmarket", ["adventure", "nature"]),
     ]
-    for name, city, category, price, duration, seed, tags in experiences:
+    experience_embeddings = semantic_match.embed_batch(
+        [f"{name} {city} {category} {' '.join(tags)}" for name, city, category, price, duration, seed, tags in experiences]
+    )
+    for (name, city, category, price, duration, seed, tags), embedding in zip(experiences, experience_embeddings):
         conn.execute(
-            "INSERT INTO experiences (id, name, city, category, price, duration_minutes, image_url, external_url, tags) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, '#', %s)",
+            "INSERT INTO experiences (id, name, city, category, price, duration_minutes, image_url, external_url, tags, embedding) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, '#', %s, %s)",
             (_new_id(), name, city, category, price, duration,
-             f"https://picsum.photos/seed/{seed}/600/400", Json(tags)),
+             f"https://picsum.photos/seed/{seed}/600/400", Json(tags), Json(embedding)),
         )
 
 
@@ -324,12 +336,9 @@ def _search_by_tags(table: str, city: str, interests: list[str], limit: int) -> 
     rows = conn.execute(f"SELECT * FROM {table} WHERE lower(city) = lower(%s)", (city,)).fetchall()
     conn.close()
     items = list(rows)
-
-    def overlap(item):
-        return len(set(item["tags"]) & set(t.lower() for t in interests))
-
-    items.sort(key=overlap, reverse=True)
-    return items[:limit]
+    if not interests:
+        return items[:limit]
+    return semantic_match.rank_by_similarity(", ".join(interests), items, limit)
 
 
 def insert_itinerary_item(trip_id: str, item_type: str, ref_id: str | None, title: str,

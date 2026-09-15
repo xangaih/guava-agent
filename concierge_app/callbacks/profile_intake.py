@@ -2,7 +2,7 @@ import logging
 
 import guava
 
-from concierge_app import db, status_store, voice_styles
+from concierge_app import db, semantic_match, status_store, voice_styles
 from concierge_app.agent import agent
 from concierge_app.callbacks.planning_actions import finalize_trip
 from concierge_app.specialists import budget, experiences, hotels, restaurants
@@ -63,7 +63,9 @@ def on_trip_intake_complete(call: guava.Call):
     split = budget.category_budget_split(float(total_budget), spend_priorities)
     db.insert_category_budgets(trip_id, split)
 
-    city = destination.split(",")[0].strip()
+    # Match free-form destination text to the city our catalog actually covers -
+    # "Italy" resolves to "Rome" instead of matching nothing.
+    city = semantic_match.match_city(destination) or destination.split(",")[0].strip()
     proposed_hotels = hotels.propose_hotels(trip_id, city, interests, count=1)
     proposed_restaurants = restaurants.propose_restaurants(trip_id, city, interests, count=1)
     proposed_experiences = experiences.propose_experiences(trip_id, city, interests, count=1)
@@ -81,6 +83,13 @@ def on_trip_intake_complete(call: guava.Call):
         summary_parts.append(
             "experience: " + ", ".join(f"{e['name']} (${e['cost']:.0f})" for e in proposed_experiences)
         )
+    if not summary_parts:
+        call.send_instruction(
+            f"Apologize that this demo doesn't have options for {destination} yet - it only "
+            f"covers {', '.join(semantic_match.KNOWN_CITIES)}. Ask if they'd like to plan a trip "
+            "to one of those instead."
+        )
+        return
 
     call.send_instruction(
         "Share these trip ideas gradually — this is a phone call, not a list to read out. "
