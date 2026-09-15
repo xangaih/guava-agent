@@ -249,15 +249,21 @@ def get_trip(trip_id: str) -> dict | None:
 
 
 def get_active_trip(traveler_id: str) -> dict | None:
-    """Most recent trip this traveler hasn't finalized yet, if any."""
+    """Most recent trip this traveler hasn't finalized yet, if any - skipping trips
+    whose destination never actually resolved to a city this demo supports (e.g. a
+    caller who named an unsupported place and hung up before correcting it). Nothing
+    should ever be offered for resume that we can't actually plan for."""
     conn = _connect()
-    row = conn.execute(
+    rows = conn.execute(
         "SELECT * FROM trips WHERE traveler_id = %s AND status != 'finalized' "
-        "ORDER BY created_at DESC LIMIT 1",
+        "ORDER BY created_at DESC",
         (traveler_id,),
-    ).fetchone()
+    ).fetchall()
     conn.close()
-    return row
+    for row in rows:
+        if row["destination"] in semantic_match.KNOWN_CITIES:
+            return row
+    return None
 
 
 def get_traveler_profile(traveler_id: str) -> dict | None:
