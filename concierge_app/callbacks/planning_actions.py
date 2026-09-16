@@ -203,6 +203,13 @@ def finalize_trip(call: guava.Call, closing_note: str = "Thank them and say thei
     'finalize_trip' intent and the trip_planning task's completion criteria, so the
     call ends the same way whether the caller asks to wrap up or just runs out of asks."""
     trip_id = call.get_variable("trip_id")
+
+    # Anything still "proposed" at this point was never explicitly rejected -
+    # the caller saying they're happy and ready to wrap up means it's accepted,
+    # even if they never said "yes, confirm that" for each one individually.
+    for item in db.list_itinerary_items(trip_id, status="proposed"):
+        db.update_itinerary_item(item["id"], status="confirmed")
+
     items = db.list_itinerary_items(trip_id, status="confirmed")
     total_cost = sum(i["cost"] or 0 for i in items)
     trip = db.get_trip(trip_id)
